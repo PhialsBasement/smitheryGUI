@@ -2,6 +2,11 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
   push:
     tags:
       - 'v*'
@@ -35,7 +40,7 @@ jobs:
         path: dist/main.exe
 
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     steps:
     - uses: actions/checkout@v2
@@ -65,7 +70,7 @@ jobs:
 
   create-release:
     needs: [build-windows, build-linux]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     steps:
     - name: Download artifacts
@@ -74,6 +79,7 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
+        tag_name: ${{ github.event.inputs.version || github.ref_name }}
         files: |
           smitheryGUI-windows/main.exe
           smitheryGUI-linux/main
