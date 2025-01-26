@@ -472,30 +472,26 @@ class MCPInstaller(QMainWindow):
         # Check if we're on Windows
         is_windows = sys.platform.startswith('win')
         
-        if is_windows:
-            # On Windows, look in AppData for npm path
-            appdata = os.getenv('APPDATA', '')
-            npm_path = os.path.join(appdata, 'npm')
-            npx_path = os.path.join(npm_path, 'npx.cmd')
-            
-            if not os.path.exists(npx_path):
-                # Try Program Files
-                program_files = os.getenv('ProgramFiles', 'C:\\Program Files')
-                npx_path = os.path.join(program_files, 'nodejs', 'npx.cmd')
-                
-            if not os.path.exists(npx_path):
-                # Try Program Files (x86)
-                program_files_x86 = os.getenv('ProgramFiles(x86)', 'C:\\Program Files (x86)')
-                npx_path = os.path.join(program_files_x86, 'nodejs', 'npx.cmd')
-            
-            final_command = f'"{npx_path}" -y @smithery/cli@latest install {name} --client {selected_client}'
-        else:
-            # Unix-like systems
-            try:
+        try:
+            if is_windows:
+                # Try to find npx in common Windows locations
+                for possible_path in [
+                    os.path.join(os.getenv('APPDATA', ''), 'npm', 'npx.cmd'),
+                    os.path.join(os.getenv('ProgramFiles', 'C:\\Program Files'), 'nodejs', 'npx.cmd'),
+                    os.path.join(os.getenv('ProgramFiles(x86)', 'C:\\Program Files (x86)'), 'nodejs', 'npx.cmd')
+                ]:
+                    if os.path.exists(possible_path):
+                        final_command = f'"{possible_path}" -y @smithery/cli@latest install {name} --client {selected_client}'
+                        break
+                else:  # No path found
+                    final_command = f'npx -y @smithery/cli@latest install {name} --client {selected_client}'
+            else:
+                # Unix systems - unset LD_LIBRARY_PATH to avoid conflicts
                 npx_path = subprocess.check_output(['which', 'npx']).decode().strip()
-                final_command = base_command.replace('npx', npx_path) + f" --client {selected_client}"
-            except subprocess.CalledProcessError:
-                final_command = f"/usr/local/bin/npx -y @smithery/cli@latest install {name} --client {selected_client}"
+                final_command = f"env -u LD_LIBRARY_PATH {npx_path} -y @smithery/cli@latest install {name} --client {selected_client}"
+        except subprocess.CalledProcessError:
+            # Fallback to just using npx and hope it's in PATH
+            final_command = f'npx -y @smithery/cli@latest install {name} --client {selected_client}'
 
         if self.is_advanced_mode:
             self.terminal.append(f"Installing {name} with client: {selected_client}...")
