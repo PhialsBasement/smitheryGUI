@@ -69,21 +69,12 @@ class CommandRunner(QThread):
     output_ready = pyqtSignal(str)
     input_required = pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, command):
         super().__init__()
-        self.setWindowTitle("Smithery MCP Installer")
-        self.resize(1200, 800)
-        self.runner = None
-        self.is_advanced_mode = False
-        
-        # Setup search timer for debouncing
-        self.search_timer = QTimer()
-        self.search_timer.setSingleShot(True)
-        self.search_timer.timeout.connect(self.do_search)
-
-        self.init_ui()
-        self.setup_styles()
-
+        self.command = command
+        self.process = None
+        self.waiting_for_input = False
+            
     def run(self):
         try:
             self.process = pexpect.popen_spawn.PopenSpawn(self.command)
@@ -128,7 +119,7 @@ class MCPInstaller(QMainWindow):
         self.resize(1200, 800)
         self.runner = None
         self.is_advanced_mode = False
-
+        
         # Setup search timer for debouncing
         self.search_timer = QTimer()
         self.search_timer.setSingleShot(True)
@@ -139,24 +130,6 @@ class MCPInstaller(QMainWindow):
         
         # Start data fetch after UI is shown
         QTimer.singleShot(0, self.do_search)
-
-    def fetch_servers(self, search_text=""):
-        url = "https://your-domain.com/proxy.php"
-        params = {
-            'pageSize': 20
-        }
-        
-        if search_text:
-            params['q'] = search_text
-            
-        try:
-            resp = requests.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("servers", [])
-        except Exception as e:
-            print("Error fetching servers:", e)
-            return []
 
     def init_ui(self):
         main_widget = QWidget()
@@ -208,19 +181,10 @@ class MCPInstaller(QMainWindow):
         self.mode_switch.setChecked(False)
         self.mode_switch.stateChanged.connect(self.toggle_mode)
 
-        self.backlink_label = QLabel()
-        self.backlink_label.setTextFormat(Qt.TextFormat.RichText)
-        self.backlink_label.setOpenExternalLinks(True)
-        self.backlink_label.setText(
-            f'Powered by <a href="https://smithery.ai/" style="color: #FF5722; '
-            'text-decoration: none;">Smithery.ai</a>'
-        )
-
         top_bar_layout.addWidget(self.search_input)
         top_bar_layout.addWidget(self.client_combo)
         top_bar_layout.addWidget(self.mode_switch)
         top_bar_layout.addStretch()
-        top_bar_layout.addWidget(self.backlink_label)
 
         main_layout.addWidget(top_widget)
 
@@ -451,6 +415,17 @@ class MCPInstaller(QMainWindow):
             desc_label.setStyleSheet("color: rgb(156, 163, 175);")
             desc_label.setWordWrap(True)
             desc_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            
+            # Create horizontal layout for name and learn more link
+            name_layout = QHBoxLayout()
+            name_layout.setSpacing(8)
+            name_layout.addWidget(name_label)
+            
+            learn_more = QLabel(f'<a href="https://smithery.ai/server/{qname}" style="color: #FF5722; text-decoration: none;">Learn More</a>')
+            learn_more.setTextFormat(Qt.TextFormat.RichText)
+            learn_more.setOpenExternalLinks(True)
+            name_layout.addWidget(learn_more)
+            name_layout.addStretch()
 
             cmd_label = QLabel(base_cmd)
             cmd_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -460,7 +435,7 @@ class MCPInstaller(QMainWindow):
                 padding: 4px 0px;
             """)
 
-            text_info_layout.addWidget(name_label)
+            text_info_layout.addLayout(name_layout)
             text_info_layout.addWidget(desc_label)
             text_info_layout.addWidget(cmd_label)
             row_layout.addWidget(text_info_widget)
