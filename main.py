@@ -27,7 +27,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtGui import QFont, QTextCursor
 
-
+# cooliosis
 class FetchWorker(QThread):
     finished = pyqtSignal(list)
     
