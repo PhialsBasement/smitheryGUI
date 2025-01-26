@@ -29,7 +29,7 @@ jobs:
         pyinstaller --onefile main.py
         
     - name: Upload artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
         name: smitheryGUI
         path: dist/main.exe
