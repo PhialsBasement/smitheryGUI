@@ -5,6 +5,8 @@ import subprocess
 import requests
 import pexpect
 import pexpect.popen_spawn
+import logging
+logger = logging.getLogger(__name__)
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -274,60 +276,16 @@ class MCPInstaller(QMainWindow):
             else:
                 QTextEdit.keyPressEvent(self.terminal, event)
 
-    def handle_input_required(self, prompt):
-        if not self.is_advanced_mode:
-            # Clean up the prompt
-            clean_prompt = prompt.replace('[49D', '').replace('[49C', '').strip()
-            
-            # Create and style the input dialog
-            dialog = QInputDialog(self)
-            dialog.setWindowTitle("Input Required")
-            dialog.setLabelText(clean_prompt)
-            dialog.setTextEchoMode(QLineEdit.EchoMode.Normal)
-            
-            # Set the stylesheet for the dialog
-            dialog.setStyleSheet("""
-                QInputDialog {
-                    background-color: #1E1E1E;
-                }
-                QInputDialog QLabel {
-                    color: #FFFFFF;
-                    font-size: 14px;
-                    padding: 10px;
-                }
-                QInputDialog QLineEdit {
-                    background-color: #1E1E1E;
-                    color: #FFFFFF;
-                    border: 1px solid #333333;
-                    border-radius: 4px;
-                    padding: 8px;
-                    margin: 10px;
-                    font-size: 14px;
-                }
-                QInputDialog QLineEdit:focus {
-                    border-color: #FF5722;
-                }
-                QInputDialog QPushButton {
-                    background-color: #FF5722;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    margin: 10px;
-                    font-weight: bold;
-                    min-width: 80px;
-                }
-                QInputDialog QPushButton:hover {
-                    background-color: #FF7043;
-                }
-                QInputDialog QPushButton:pressed {
-                    background-color: #F4511E;
-                }
-            """)
-            
-            text, ok = dialog.exec(), dialog.textValue()
-            if ok:
-                self.runner.write_input(text + '\n')
+    def handle_input_required(self, text):
+        """Handle required input by converting to string before writing"""
+        try:
+            # Convert input to string explicitly before concatenation
+            self.runner.write_input(f"{text}\n")  # Using f-string for safe conversion
+            self.input_requested = False
+            self.update_output()  # Refresh the UI after input
+        except Exception as e:
+            logger.error(f"Input handling failed: {str(e)}")
+            self.show_error(f"Input error: {str(e)}")
 
     def fetch_servers(self, search_text=""):
         url = "https://sparkphial.com/proxgui.php"
