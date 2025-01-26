@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import os
 import subprocess
 import requests
 import pexpect
@@ -27,7 +28,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtGui import QFont, QTextCursor
 
-# cooliosis
+
 class FetchWorker(QThread):
     finished = pyqtSignal(list)
     
@@ -467,7 +468,34 @@ class MCPInstaller(QMainWindow):
         
     def run_command(self, base_command, name):
         selected_client = self.client_combo.currentText().lower()
-        final_command = f"{base_command} --client {selected_client}"
+        
+        # Check if we're on Windows
+        is_windows = sys.platform.startswith('win')
+        
+        if is_windows:
+            # On Windows, look in AppData for npm path
+            appdata = os.getenv('APPDATA', '')
+            npm_path = os.path.join(appdata, 'npm')
+            npx_path = os.path.join(npm_path, 'npx.cmd')
+            
+            if not os.path.exists(npx_path):
+                # Try Program Files
+                program_files = os.getenv('ProgramFiles', 'C:\\Program Files')
+                npx_path = os.path.join(program_files, 'nodejs', 'npx.cmd')
+                
+            if not os.path.exists(npx_path):
+                # Try Program Files (x86)
+                program_files_x86 = os.getenv('ProgramFiles(x86)', 'C:\\Program Files (x86)')
+                npx_path = os.path.join(program_files_x86, 'nodejs', 'npx.cmd')
+            
+            final_command = f'"{npx_path}" -y @smithery/cli@latest install {name} --client {selected_client}'
+        else:
+            # Unix-like systems
+            try:
+                npx_path = subprocess.check_output(['which', 'npx']).decode().strip()
+                final_command = base_command.replace('npx', npx_path) + f" --client {selected_client}"
+            except subprocess.CalledProcessError:
+                final_command = f"/usr/local/bin/npx -y @smithery/cli@latest install {name} --client {selected_client}"
 
         if self.is_advanced_mode:
             self.terminal.append(f"Installing {name} with client: {selected_client}...")
