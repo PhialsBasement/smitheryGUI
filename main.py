@@ -365,7 +365,7 @@ class MCPInstaller(QMainWindow):
                 self.runner.write_input(text + '\n')
 
     def fetch_servers(self, search_text=""):
-        url = "either your domain or the default api key goes here"
+        url = "https://sparkphial.com/proxgui.php"
         params = {
             'pageSize': 20
         }
