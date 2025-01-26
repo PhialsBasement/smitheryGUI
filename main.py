@@ -481,17 +481,17 @@ class MCPInstaller(QMainWindow):
                     os.path.join(os.getenv('ProgramFiles(x86)', 'C:\\Program Files (x86)'), 'nodejs', 'npx.cmd')
                 ]:
                     if os.path.exists(possible_path):
-                        final_command = f'"{possible_path}" -y @smithery/cli@latest install {name} --client {selected_client}'
+                        final_command = f'"{possible_path}" -y @smithery/cli@latest install {base_command.split()[-1]} --client {selected_client}'
                         break
                 else:  # No path found
-                    final_command = f'npx -y @smithery/cli@latest install {name} --client {selected_client}'
+                    final_command = base_command + f" --client {selected_client}"
             else:
                 # Unix systems - unset LD_LIBRARY_PATH to avoid conflicts
                 npx_path = subprocess.check_output(['which', 'npx']).decode().strip()
-                final_command = f"env -u LD_LIBRARY_PATH {npx_path} -y @smithery/cli@latest install {name} --client {selected_client}"
+                final_command = f"env -u LD_LIBRARY_PATH {npx_path} -y @smithery/cli@latest install {base_command.split()[-1]} --client {selected_client}"
         except subprocess.CalledProcessError:
             # Fallback to just using npx and hope it's in PATH
-            final_command = f'npx -y @smithery/cli@latest install {name} --client {selected_client}'
+            final_command = base_command + f" --client {selected_client}"
 
         if self.is_advanced_mode:
             self.terminal.append(f"Installing {name} with client: {selected_client}...")
