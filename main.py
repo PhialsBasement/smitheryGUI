@@ -1,0 +1,1 @@
+/home/phiality/smitheryGUI/main.py
