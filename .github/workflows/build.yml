@@ -1,10 +1,9 @@
-name: Build Executables
+name: Build and Release
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    tags:
+      - 'v*'
 
 jobs:
   build-windows:
@@ -28,7 +27,7 @@ jobs:
       run: |
         pyinstaller --onefile main.py
         
-    - name: Upload artifact
+    - name: Upload Windows artifact
       uses: actions/upload-artifact@v4
       with:
         name: smitheryGUI-windows
@@ -57,8 +56,25 @@ jobs:
       run: |
         pyinstaller --onefile main.py
         
-    - name: Upload artifact
+    - name: Upload Linux artifact
       uses: actions/upload-artifact@v4
       with:
         name: smitheryGUI-linux
         path: dist/main
+
+  create-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          smitheryGUI-windows/main.exe
+          smitheryGUI-linux/main
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
