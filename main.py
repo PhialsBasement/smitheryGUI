@@ -27,8 +27,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtGui import QFont, QTextCursor
-
-
+import time
+import json
 class FetchWorker(QThread):
     finished = pyqtSignal(list)
     
@@ -111,6 +111,12 @@ class CommandRunner(QThread):
         if self.process:
             self.process.write(data.encode())
             self.waiting_for_input = False
+
+    def terminate(self):
+        if self.process:
+            import signal
+            self.process.kill(signal.SIGTERM)
+            super().terminate()
 
 
 class MCPInstaller(QMainWindow):
@@ -276,16 +282,50 @@ class MCPInstaller(QMainWindow):
 
     def handle_input_required(self, prompt):
         if not self.is_advanced_mode:
-            # Clean up the prompt
-            clean_prompt = prompt.replace('[49D', '').replace('[49C', '').strip()
+            import re
+            import signal
+            
+            print(f"DEBUG: Raw prompt received: {repr(prompt)}")
+            
+            # Clean up the prompt by removing ANSI escape sequences and extra whitespace
+            clean_prompt = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', prompt)
+            clean_prompt = re.sub(r'\s+', ' ', clean_prompt).strip()
+            
+            print(f"DEBUG: Cleaned prompt: {repr(clean_prompt)}")
+            
+            # Handle restart prompt immediately
+            if any(x in clean_prompt.lower() for x in ["would you like to restart", "(y/n)", "restart the claude app"]):
+                if not hasattr(self, 'restart_handled'):
+                    try:
+                        self.runner.write_input("n\n")
+                        self.restart_handled = True
+                    except:
+                        print("DEBUG: Process already closed")
+                return
+    
+            # Remove leading "? " if present
+            if clean_prompt.startswith('? '):
+                clean_prompt = clean_prompt[2:]
+            
+            # Extract the base prompt (everything before any user input)
+            base_prompt = clean_prompt.split('\n')[0].strip()
+            if hasattr(self, 'last_base_prompt'):
+                print(f"DEBUG: Comparing base prompts:")
+                print(f"DEBUG: Current: {repr(base_prompt)}")
+                print(f"DEBUG: Last: {repr(self.last_base_prompt)}")
+                
+                if base_prompt == self.last_base_prompt:
+                    print("DEBUG: Duplicate prompt detected, ignoring")
+                    return
+            
+            self.last_base_prompt = base_prompt
             
             # Create and style the input dialog
             dialog = QInputDialog(self)
             dialog.setWindowTitle("Input Required")
-            dialog.setLabelText(clean_prompt)
+            dialog.setLabelText(base_prompt)
             dialog.setTextEchoMode(QLineEdit.EchoMode.Normal)
             
-            # Set the stylesheet for the dialog
             dialog.setStyleSheet("""
                 QInputDialog {
                     background-color: #1E1E1E;
@@ -325,10 +365,21 @@ class MCPInstaller(QMainWindow):
                 }
             """)
             
-            text, ok = dialog.exec(), dialog.textValue()
-            if ok:
-                self.runner.write_input(text + '\n')
-
+            if dialog.exec():
+                text = dialog.textValue()
+                try:
+                    self.runner.write_input(text + '\n')
+                except:
+                    print("DEBUG: Process closed, cannot write input")
+            else:
+                # Handle cancellation
+                try:
+                    if self.runner and self.runner.process:
+                        self.runner.process.kill(signal.SIGTERM)
+                        self.runner.process = None
+                        self.terminal.append("\nOperation cancelled by user")
+                except Exception as e:
+                    print(f"DEBUG: Error during cancellation: {e}")
     def fetch_servers(self, search_text=""):
         url = "https://sparkphial.com/proxgui.php"
         params = {
@@ -465,112 +516,197 @@ class MCPInstaller(QMainWindow):
 
     def filter_mcps(self, text):
         self.populate_mcps(text)
-        
+    def ensure_runner_dir(self):
+        if not os.path.exists('/home/runner'):
+            msg = QMessageBox(self)
+            msg.setWindowTitle("First Run Setup")
+            msg.setText("Smithery needs to create some directories. This requires sudo access and will only happen once.")
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.exec()
+
+            password, ok = QInputDialog.getText(
+                self, 'Sudo Required',
+                'Please enter your sudo password:',
+                QLineEdit.EchoMode.Password
+            )
+
+            if ok and password:
+                cmd = f'echo {password} | sudo -S mkdir -p /home/runner/.config/Claude && sudo chown -R $USER:$USER /home/runner'
+                proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                _, err = proc.communicate()
+
+                if proc.returncode != 0:
+                    QMessageBox.critical(self, "Setup Failed", f"Failed to create directories: {err.decode()}")
+                    return False
+                return True
+            return False
+        return True        
     def run_command(self, base_command, name):
-        selected_client = self.client_combo.currentText().lower()
-        
-        # Check if we're on Windows
-        is_windows = sys.platform.startswith('win')
-        
+            # First ensure runner directory exists
+            if not self.ensure_runner_dir():
+                return
+
+            selected_client = self.client_combo.currentText().lower()
+            is_windows = sys.platform.startswith('win')
+
+            try:
+                if is_windows:
+                    for possible_path in [
+                        os.path.join(os.getenv('APPDATA', ''), 'npm', 'npx.cmd'),
+                        os.path.join(os.getenv('ProgramFiles', 'C:\\Program Files'), 'nodejs', 'npx.cmd'),
+                        os.path.join(os.getenv('ProgramFiles(x86)', 'C:\\Program Files (x86)'), 'nodejs', 'npx.cmd')
+                    ]:
+                        if os.path.exists(possible_path):
+                            final_command = f'"{possible_path}" -y @smithery/cli@latest install {base_command.split()[-1]} --client {selected_client}'
+                            break
+                    else:
+                        final_command = base_command + f" --client {selected_client}"
+                else:
+                    npx_path = subprocess.check_output(['which', 'npx']).decode().strip()
+                    final_command = f"{npx_path} -y @smithery/cli@latest install {base_command.split()[-1]} --client {selected_client}"
+            except:
+                final_command = base_command + f" --client {selected_client}"
+
+            if self.is_advanced_mode:
+                self.terminal.append(f"Installing {name} with client: {selected_client}...")
+                self.terminal.append(f"> {final_command}\n")
+
+            self.runner = CommandRunner(final_command)
+            self.runner.output_ready.connect(self.on_output_line)
+            self.runner.input_required.connect(self.handle_input_required)
+            self.runner.start()
+
+    def ensure_config_copied(self):
+        source = '/home/runner/.config/Claude/claude_desktop_config.json'
+        dest = os.path.expanduser('~/.config/Claude/claude_desktop_config.json')
+
         try:
-            if is_windows:
-                # Try to find npx in common Windows locations
-                for possible_path in [
-                    os.path.join(os.getenv('APPDATA', ''), 'npm', 'npx.cmd'),
-                    os.path.join(os.getenv('ProgramFiles', 'C:\\Program Files'), 'nodejs', 'npx.cmd'),
-                    os.path.join(os.getenv('ProgramFiles(x86)', 'C:\\Program Files (x86)'), 'nodejs', 'npx.cmd')
-                ]:
-                    if os.path.exists(possible_path):
-                        final_command = f'"{possible_path}" -y @smithery/cli@latest install {base_command.split()[-1]} --client {selected_client}'
-                        break
-                else:  # No path found
-                    final_command = base_command + f" --client {selected_client}"
-            else:
-                # Unix systems - unset LD_LIBRARY_PATH to avoid conflicts
-                npx_path = subprocess.check_output(['which', 'npx']).decode().strip()
-                final_command = f"env -u LD_LIBRARY_PATH {npx_path} -y @smithery/cli@latest install {base_command.split()[-1]} --client {selected_client}"
-        except subprocess.CalledProcessError:
-            # Fallback to just using npx and hope it's in PATH
-            final_command = base_command + f" --client {selected_client}"
+            if os.path.exists(source):
+                # Read the new config
+                with open(source) as f:
+                    new_config = json.load(f)
 
-        if self.is_advanced_mode:
-            self.terminal.append(f"Installing {name} with client: {selected_client}...")
-            self.terminal.append(f"> {final_command}\n")
+                # Read existing config if it exists
+                existing_config = {"mcpServers": {}}
+                if os.path.exists(dest):
+                    try:
+                        with open(dest) as f:
+                            existing_config = json.load(f)
+                    except json.JSONDecodeError:
+                        print(f"DEBUG: Invalid JSON in existing config, will overwrite")
 
-        self.runner = CommandRunner(final_command)
-        self.runner.output_ready.connect(self.on_output_line)
-        self.runner.input_required.connect(self.handle_input_required)
-        self.runner.start()
+                # Make sure mcpServers exists in both
+                if "mcpServers" not in existing_config:
+                    existing_config["mcpServers"] = {}
+                if "mcpServers" not in new_config:
+                    new_config["mcpServers"] = {}
+
+                # Merge mcpServers entries
+                for server_name, server_config in new_config["mcpServers"].items():
+                    existing_config["mcpServers"][server_name] = server_config
+
+                # Make sure destination directory exists
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+
+                # Write merged config
+                with open(dest, 'w') as f:
+                    json.dump(existing_config, f, indent=2)
+
+                print(f"DEBUG: Merged new config into {dest}")
+                return True
+
+        except Exception as e:
+            print(f"DEBUG: Failed to merge config: {e}")
+        return False
 
     def on_output_line(self, line):
-        if self.is_advanced_mode:
-            self.terminal.append(line)
-            cursor = self.terminal.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            self.terminal.setTextCursor(cursor)
-        else:
-            # In simplified mode, only show error messages in a popup
-            if "Error" in line or "failed" in line.lower():
-                msg = QMessageBox(QMessageBox.Icon.Warning, "Installation Status", line, parent=self)
-                msg.setStyleSheet("""
-                    QMessageBox {
-                        background-color: #1E1E1E;
-                    }
-                    QMessageBox QLabel {
-                        color: #FFFFFF;
-                        font-size: 14px;
-                        padding: 10px;
-                        min-width: 400px;
-                    }
-                    QMessageBox QPushButton {
-                        background-color: #FF5722;
-                        color: white;
-                        border: none;
-                        border-radius: 4px;
-                        padding: 8px 16px;
-                        margin: 10px;
-                        font-weight: bold;
-                        min-width: 80px;
-                    }
-                    QMessageBox QPushButton:hover {
-                        background-color: #FF7043;
-                    }
-                    QMessageBox QPushButton:pressed {
-                        background-color: #F4511E;
-                    }
-                """)
-                msg.exec()
-            elif "completed successfully" in line:
-                msg = QMessageBox(QMessageBox.Icon.Information, "Installation Status", 
-                                "Installation completed successfully!", parent=self)
-                msg.setStyleSheet("""
-                    QMessageBox {
-                        background-color: #1E1E1E;
-                    }
-                    QMessageBox QLabel {
-                        color: #FFFFFF;
-                        font-size: 14px;
-                        padding: 10px;
-                        min-width: 400px;
-                    }
-                    QMessageBox QPushButton {
-                        background-color: #FF5722;
-                        color: white;
-                        border: none;
-                        border-radius: 4px;
-                        padding: 8px 16px;
-                        margin: 10px;
-                        font-weight: bold;
-                        min-width: 80px;
-                    }
-                    QMessageBox QPushButton:hover {
-                        background-color: #FF7043;
-                    }
-                    QMessageBox QPushButton:pressed {
-                        background-color: #F4511E;
-                    }
-                """)
-                msg.exec()
+            import json
+            print(f"DEBUG: {line}")
+            if self.is_advanced_mode:
+                self.terminal.append(line)
+                cursor = self.terminal.textCursor()
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+                self.terminal.setTextCursor(cursor)
+            else:
+                if "Error" in line or "failed" in line.lower():
+                    msg = QMessageBox(QMessageBox.Icon.Warning, "Installation Status", line, parent=self)
+                    msg.setStyleSheet("""
+                        QMessageBox {
+                            background-color: #1E1E1E;
+                        }
+                        QMessageBox QLabel {
+                            color: #FFFFFF;
+                            font-size: 14px;
+                            padding: 10px;
+                            min-width: 400px;
+                        }
+                        QMessageBox QPushButton {
+                            background-color: #FF5722;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            padding: 8px 16px;
+                            margin: 10px;
+                            font-weight: bold;
+                            min-width: 80px;
+                        }
+                        QMessageBox QPushButton:hover {
+                            background-color: #FF7043;
+                        }
+                        QMessageBox QPushButton:pressed {
+                            background-color: #F4511E;
+                        }
+                    """)
+                    msg.exec()
+                elif "Successfully installed" in line:
+                    time.sleep(1)
+
+                    if self.ensure_config_copied():
+                        msg = QMessageBox(QMessageBox.Icon.Information, "Installation Status", 
+                                        "Installation completed successfully!\n\nPlease restart Claude to use the new MCP.", parent=self)
+                    else:
+                        source = '/home/runner/.config/Claude/claude_desktop_config.json'
+                        error_msg = "Installation completed but config setup failed.\nTry running the app with sudo once."
+                        if os.path.exists(source):
+                            try:
+                                with open(source) as f:
+                                    config = f.read()
+                                error_msg += f"\n\nDebug info:\nConfig exists at {source}\nContents: {config}"
+                            except Exception as e:
+                                error_msg += f"\n\nDebug info: Failed to read config: {e}"
+                        else:
+                            error_msg += f"\n\nDebug info: Config not found at {source}"
+
+                        msg = QMessageBox(QMessageBox.Icon.Warning, "Installation Status", error_msg, parent=self)
+
+                    msg.setStyleSheet("""
+                        QMessageBox {
+                            background-color: #1E1E1E;
+                        }
+                        QMessageBox QLabel {
+                            color: #FFFFFF;
+                            font-size: 14px;
+                            padding: 10px;
+                            min-width: 400px;
+                        }
+                        QMessageBox QPushButton {
+                            background-color: #FF5722;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            padding: 8px 16px;
+                            margin: 10px;
+                            font-weight: bold;
+                            min-width: 80px;
+                        }
+                        QMessageBox QPushButton:hover {
+                            background-color: #FF7043;
+                        }
+                        QMessageBox QPushButton:pressed {
+                            background-color: #F4511E;
+                        }
+                    """)
+                    msg.exec()
 
     def setup_styles(self):
         self.setStyleSheet("""
